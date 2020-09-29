@@ -44,11 +44,43 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
+#define WPTR (unsigned int *)
+#define WORD_SIZE 4 // 1W = 4B
+
+// Get and set word pointed by ptr
+#define GET_WORD(ptr) (*(unsigned int *) ptr)
+#define SET_WORD(ptr, data) ((*(unsigned int *)(ptr)) = data)
+
+// Get block size and alloc bit
+#define GET_BLOCK_SIZE(ptr) (GET_WORD(ptr) & ~0x1)
+#define GET_ALLOC(ptr) (GET_WORD(ptr) & 0x1)
+
+// Get and set block header and footer
+#define GET_HDR(ptr) (*(unsigned int *)(ptr))
+#define SET_HDR(ptr, data) (*(unsigned int *)(ptr) = data)
+#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4))
+#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4) = data)
+
+// Get and set Next/Prev pointers in free blocks
+#define GET_NEXT(ptr) (*(unsigned int *)(ptr) + 1)
+#define GET_PREV(ptr) (*(unsigned int *)(ptr) + 2)
+#define SET_NEXT(ptr, data) (*((unsigned int *) ptr + 1) = data)
+#define SET_PREV(ptr, data) (*((unsigned int *) ptr + 2) = data)
+
+// Get actual next & prev blocks
+#define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes
+#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - 4)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes
+
+// Format header
+#define FHDR(size, a) (size | a)
+
+
 /* 
  * mm_init - initialize the malloc package.
  */
 
 void *init_mem_sbrk_break = NULL;
+
 
 int mm_init(void)
 {
