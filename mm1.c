@@ -75,6 +75,146 @@ team_t team = {
 #define FHDR(size, a) (size | a)
 
 
+void add_block_to_fl(void*);
+void remove_block_from_fl(void*);
+void* move_pbrk(int);
+void* coalesce(void*);
+
+void* fl_head;
+
+
+/*
+	Adds a free blocks to start of the free list.
+*/
+void add_block_to_fl(void* block) {
+	if (!block) { // Safety check
+		return;
+	}
+
+	if (!fl_head) {
+		fl_head = block;
+		return;
+	}
+
+	// Always add block to head of the free list
+	SET_PREV(fl_head, block);
+	SET_NEXT(block, fl_head);
+	fl_head = block;
+}
+
+/*
+	Uses the mem_sbrk(bytes) call to move the program break. 
+	Treats the extended chunk as a new free block.
+	Coalesces with the previous free block (if any).
+	Returns the updated free block if coalescing is done.
+*/
+void* move_pbrk(int words) {
+	// Align to nearest multiple of 'alignment'
+	int bytes = ALIGN(words * WORD_SIZE);
+	
+	// Request for space
+	void* bptr = mem_sbrk(bytes);
+	if ((*(int *)(bptr)) == -1) { // Memory overflow
+		return -1;
+	}
+
+	// Initialise new free block
+	SET_HDR(bptr, FHDR(bytes, 0));
+	SET_FTR(bptr, FHDR(bytes, 0));
+	SET_NEXT(bptr, 0);
+	SET_PREV(bptr, 0);
+
+	// Coalesce with prev free block (if any)
+	bptr = coalesce (bptr);
+
+	// Add block to list
+	add_block_to_fl(bptr);
+
+	return bptr;
+}
+
+
+/*
+	Removes a block from the free list.
+*/
+void remove_block_from_fl(void *block) {
+	// TODO: Safety check if required
+
+	// Case 1: Only node i.e next = 0 & prev = 0
+	if (!GET_NEXT(block) && !GET_PREV(block)) {
+		fl_head = NULL;
+		return;
+	}
+
+	// Case 2: Head node i.e. prev = 0 and next != 0
+	if (!GET_PREV(block) && GET_NEXT(block)) {
+		fl_head = GET_NEXT(block);
+		return;
+	}
+
+	// Case 3: Last node i.e prev != 0 and next = 0
+	if (GET_PREV(block) && !GET_NEXT(block)) {
+		SET_NEXT(GET_PREV(block), 0);
+		return;
+	}
+
+	// Case 4: Middle node
+	void* prev_block = GET_PREV(block);
+	void* next_block = GET_NEXT(block);
+
+	SET_NEXT(prev_block, next_block);
+	SET_PREV(next_block, prev_block);
+}
+
+/*
+	Takes as input a free block and tries to coalesce with adjacent free blocks if any.
+	Returns updated block if any coalescing was done.
+*/
+void* coalesce(void* bptr) {
+	void* next_block = GET_ANEXT(bptr);
+	void* prev_block = GET_APREV(bptr);
+
+	int next_a = next_block ? GET_ALLOC(next_block) : 0, prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
+
+	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0, prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
+
+	int cur_size = GET_BLOCK_SIZE(bptr);
+
+	// Case 1: Prev and next both are allocated, do nothing
+
+	if (!next_a && prev_a) { // Case 2: Prev is allocated, next is free
+		remove_block_from_fl(next_block);
+		cur_size += next_size;
+		// Order is important sinze, FTR location calculation makes use of size in HDR
+		SET_HDR(bptr, FHDR(cur_size, 0));
+		SET_FTR(bptr, FHDR(cur_size, 0));
+
+	} else if (next_a && !prev_a) { // Case 3: Next is allocated, prev is free
+		remove_block_from_fl(prev_block);
+		cur_size += prev_size;
+		// Order is important sinze, FTR location calculation makes use of size in HDR
+		SET_HDR(prev_block, FHDR(cur_size, 0));
+		SET_FTR(prev_block, FHDR(cur_size, 0));
+		
+		bptr = prev_block;
+
+	} else if (!next_a && !prev_a){ // Case 4: Prev and next both are free
+		remove_block_from_fl(next_block);
+		remove_block_from_fl(prev_block);
+		cur_size += (next_size + prev_size);
+		// Order is important sinze, FTR location calculation makes use of size in HDR
+		SET_HDR(prev_block, FHDR(cur_size, 0));
+		SET_FTR(prev_block, FHDR(cur_size, 0));
+
+		bptr = prev_block;
+	}
+
+	return bptr;
+}
+
+
+
+
 /* 
  * mm_init - initialize the malloc package.
  */
