@@ -63,12 +63,6 @@ team_t team = {
 #define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE))
 #define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE) = data)
 
-// FREE BLOCK STRUCTURE
-// size | a   \
-// NEXT_PTR    - HEADER (3 WORD)
-// PREV_PTR   /
-// FREE SPACE
-// size | a   - FOOTER (1 WORD)
 // Get and set Next/Prev pointers in free blocks
 #define GET_NEXT(ptr) (*((unsigned int *)(ptr) + 1))
 #define GET_PREV(ptr) (*((unsigned int *)(ptr) + 2))
@@ -82,7 +76,14 @@ team_t team = {
 // Format header
 #define FHDR(size, a) (size | a)
 
+// Min no bytes to extend heap
 #define EXTEND_BY_SIZE 1 << 12 // in bytes
+
+// Utility to find maximum
+#define max(x, y) x > y ? x : y
+
+// Minimum bytes for a free block
+#define MIN_FREE_BLOCK_SIZE 16 // 16 = 4W = HDR + FTR + NEXT + PREV
 
 
 void add_block_to_fl(void*);
@@ -122,20 +123,15 @@ void add_block_to_fl(void* block) {
 	Coalesces with the previous free block (if any).
 	Returns the updated free block if coalescing is done.
 */
-
 void* move_pbrk(int bytes) {
 	// Align to nearest multiple of 'alignment'
 	bytes = ALIGN(bytes * WORD_SIZE);
 
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
-
 	if ((*(int *)(bptr)) == -1) { // Memory overflow
 		return NULL;
 	}
-
-	// printf("PREV FTR ADDR = %p, SIZE = %d\n", (char*)bptr - 4, GET_BLOCK_SIZE((char*)bptr - 4));
-
 
 	// Initialise new free block
 	SET_HDR(bptr, FHDR(bytes, 0));
@@ -182,7 +178,6 @@ void remove_block_from_fl(void *block) {
 		return;
 	}
 	
-
 	// Case 4: Middle node
 	void* prev_block = GET_PREV(block);
 	void* next_block = GET_NEXT(block);
@@ -273,7 +268,7 @@ void allocate(void* ptr, int bytes) {
 	remove_block_from_fl(ptr);
 
 	// Case 1: BLOCK SIZE = bytes, no splitting required 
-	if (block_size == bytes) {
+	if (block_size - bytes <= MIN_FREE_BLOCK_SIZE) {
 		SET_HDR(ptr, FHDR(block_size, 1));
 		SET_FTR(ptr, FHDR(block_size, 1));
 
@@ -327,13 +322,17 @@ int mm_init(void)
 		ptr = mem_sbrk(4 - mask); 
 	else
 		ptr = mem_sbrk(12 - mask);
-	//Make the program break divisible by 4 but not by 8 (i.e. ALIGNMENT). Since we always allocate multiple of 8B blocks (including header & footer), the same constraint will be maintained afterwards.
-	//Reason: When we allocate blocks we need to allocate 4B of block header as well. So everytime the pointer to the actual block (not block header) is point to address which is multiple of 8 (that means aligned by 8 bytes)
+
+	/* Make the program break divisible by 4 but not by 8 (i.e. ALIGNMENT). 
+	 * Since we always allocate multiple of 8B blocks (including header & footer), the same constraint will be maintained afterwards.
+	 * Reason: When we allocate blocks we need to allocate 4B of block header as well.
+	 * So everytime the pointer to the actual block (not block header) is point to address which is multiple of 8 (that means aligned by 8 bytes)
+	 */
 	fl_head = NULL;
 
 	// Dummy block to prevent segment overflow error
-	void* dbptr = mem_sbrk(8);
 	unsigned int sz = 8;
+	void* dbptr = mem_sbrk(sz);
 	SET_HDR(dbptr, FHDR(sz, 1));
 	SET_FTR(dbptr, FHDR(sz, 1));
 
@@ -380,7 +379,7 @@ void *mm_malloc(size_t size)
 	}
 	
 	// Try to extend program break
-	best_block = move_pbrk(EXTEND_BY_SIZE);
+	best_block = move_pbrk(max(req_size, EXTEND_BY_SIZE));
 	if (best_block != NULL) {
 		allocate(best_block, req_size);
 		return (void*)((char*)best_block + 4); 
