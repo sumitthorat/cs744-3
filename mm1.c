@@ -82,7 +82,7 @@ team_t team = {
 // Format header
 #define FHDR(size, a) (size | a)
 
-#define EXTEND_BY_SIZE 1 << 16 // in bytes
+#define EXTEND_BY_SIZE 1 << 12 // in bytes
 
 
 void add_block_to_fl(void*);
@@ -172,6 +172,7 @@ void remove_block_from_fl(void *block) {
 	// Case 2: Head node i.e. prev = 0 and next != 0
 	if (!GET_PREV(block) && GET_NEXT(block)) {
 		fl_head = GET_NEXT(block);
+		SET_PREV(fl_head, NULL);
 		return;
 	}
 
