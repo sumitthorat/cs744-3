@@ -125,7 +125,7 @@ void add_block_to_fl(void* block) {
 */
 void* move_pbrk(int bytes) {
 	// Align to nearest multiple of 'alignment'
-	bytes = ALIGN(bytes * WORD_SIZE);
+	bytes = ALIGN(bytes);
 
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
@@ -431,8 +431,11 @@ void mm_free(void *ptr)
 void *mm_realloc(void *ptr, size_t size)
 {	
 	size = ((size+7)/8)*8; //8-byte alignement	
+	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 	
-	if(ptr == NULL){			//memory was not previously allocated
+	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
+
+	if(ptr == NULL) {	//memory was not previously allocated
 		return mm_malloc(size);
 	}
 	
@@ -449,9 +452,37 @@ void *mm_realloc(void *ptr, size_t size)
 	 * blocks should also be updated.
 	*/
 
-	mm_free(ptr);
-	return mem_sbrk(size);
-	
+	int block_size = GET_BLOCK_SIZE(bptr);
+	if (req_size <= block_size) {
+	        // Case 1: no splitting required 
+		if (block_size - size <= MIN_FREE_BLOCK_SIZE) {
+                	SET_HDR(bptr, FHDR(block_size, 1));
+                	SET_FTR(bptr, FHDR(block_size, 1));
+		}
+        	else { // Case 2: BLOCK_SIZE > size, split, remove unused chunk and add to the beginning of the list
+                	SET_HDR(bptr, FHDR(req_size, 1));
+                	SET_FTR(bptr, FHDR(req_size, 1));
+                
+			void* next_bptr = GET_ANEXT(bptr);
+                	SET_HDR(next_bptr, FHDR(block_size - req_size, 0));
+                	SET_FTR(next_bptr, FHDR(block_size - req_size, 0));
+                	SET_NEXT(next_bptr, 0);
+                	SET_PREV(next_bptr, 0);
+
+                	next_bptr = coalesce(next_bptr);
+
+                	add_block_to_fl(next_bptr);
+        	}
+		return ptr;
+	}
+	else {
+		void *newptr = mm_malloc(size);		// mm_malloc() will take care of the header & footer part
+		if ( newptr == NULL)
+			return NULL;
+		memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
+		mm_free(ptr);
+		return newptr; 
+	}
 }
 
 
