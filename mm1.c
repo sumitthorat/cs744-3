@@ -44,8 +44,10 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-#define WPTR (unsigned int *)
+#define WPTR unsigned int *
 #define WORD_SIZE 4 // 1W = 4B
+#define FOOTER_SIZE 4
+#define HEADER_SIZE 4
 
 // Get and set word pointed by ptr
 #define GET_WORD(ptr) (*(unsigned int *) ptr)
@@ -58,18 +60,24 @@ team_t team = {
 // Get and set block header and footer
 #define GET_HDR(ptr) (*(unsigned int *)(ptr))
 #define SET_HDR(ptr, data) (*(unsigned int *)(ptr) = data)
-#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4))
-#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4) = data)
+#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FOOTER_SIZE))
+#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FOOTER_SIZE) = data)
 
+// FREE BLOCK STRUCTURE
+// size | a   \
+// NEXT_PTR    - HEADER (3 WORD)
+// PREV_PTR   /
+// FREE SPACE
+// size | a   - FOOTER (1 WORD)
 // Get and set Next/Prev pointers in free blocks
-#define GET_NEXT(ptr) (*(unsigned int *)(ptr) + 1)
-#define GET_PREV(ptr) (*(unsigned int *)(ptr) + 2)
+#define GET_NEXT(ptr) (*((unsigned int *)(ptr) + 1))
+#define GET_PREV(ptr) (*((unsigned int *)(ptr) + 2))
 #define SET_NEXT(ptr, data) (*((unsigned int *) ptr + 1) = data)
 #define SET_PREV(ptr, data) (*((unsigned int *) ptr + 2) = data)
 
 // Get actual next & prev blocks
 #define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes
-#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - 4)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes
+#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - FOOTER_SIZE)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes
 
 // Format header
 #define FHDR(size, a) (size | a)
@@ -84,7 +92,7 @@ void* fl_head;
 
 
 /*
-	Adds a free blocks to start of the free list.
+	Adds a free block to start of the free list.
 */
 void add_block_to_fl(void* block) {
 	if (!block) { // Safety check
@@ -93,12 +101,16 @@ void add_block_to_fl(void* block) {
 
 	if (!fl_head) {
 		fl_head = block;
+		SET_PREV(fl_head,NULL);
+		SET_NEXT(fl_head,NULL);
 		return;
 	}
 
-	// Always add block to head of the free list
 	SET_PREV(fl_head, block);
 	SET_NEXT(block, fl_head);
+	
+	SET_PREV(block,NULL);
+
 	fl_head = block;
 }
 
@@ -114,6 +126,7 @@ void* move_pbrk(int words) {
 	
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
+
 	if ((*(int *)(bptr)) == -1) { // Memory overflow
 		return -1;
 	}
@@ -157,6 +170,7 @@ void remove_block_from_fl(void *block) {
 		SET_NEXT(GET_PREV(block), 0);
 		return;
 	}
+	
 
 	// Case 4: Middle node
 	void* prev_block = GET_PREV(block);
@@ -202,7 +216,7 @@ void* coalesce(void* bptr) {
 		remove_block_from_fl(next_block);
 		remove_block_from_fl(prev_block);
 		cur_size += (next_size + prev_size);
-		// Order is important sinze, FTR location calculation makes use of size in HDR
+		// Order is important since, FTR location calculation makes use of size in HDR
 		SET_HDR(prev_block, FHDR(cur_size, 0));
 		SET_FTR(prev_block, FHDR(cur_size, 0));
 
@@ -234,7 +248,19 @@ int mm_init(void)
 	 * 
 	 * This function will be called multiple time in the driver code "mdriver.c"
 	 */
-	
+
+	void *ptr = (char*)mem_sbrk(0);
+	int mask = (int)((unsigned int)ptr&0x7);
+	if(mask==0)
+		ptr = mem_sbrk(4);
+	else if(mask>=1&&mask<=4)
+		ptr = mem_sbrk(4-mask); 
+	else
+		ptr = mem_sbrk(12-mask);
+	ptr = mem_sbrk(0);
+	//printf("%p %d %d\n",ptr,(unsigned int)ptr%4,(unsigned int)ptr%8);
+	//Make the program break divisible by 4 but not by 8 (i.e. ALIGNMENT). Since we always allocate multiple of 8B blocks (including header & footer), the same constraint will be maintained afterwards.
+	//Reason: When we allocate blocks we need to allocate 4B of block header as well. So everytime the pointer to the actual block (not block header) is point to address which is multiple of 8 (that means aligned by 8 bytes)
     return 0;		//Returns 0 on successfull initialization.
 }
 
