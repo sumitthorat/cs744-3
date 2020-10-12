@@ -48,7 +48,7 @@ team_t team = {
 #define WORD_SIZE 4 // 1W = 4B
 
 // Get and set word pointed by ptr
-#define GET_WORD(ptr) (*(unsigned int *) ptr)
+#define GET_WORD(ptr) (*(unsigned int *)(ptr))
 #define SET_WORD(ptr, data) ((*(unsigned int *)(ptr)) = data)
 
 // Get block size and alloc bit
@@ -62,17 +62,19 @@ team_t team = {
 #define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4) = data)
 
 // Get and set Next/Prev pointers in free blocks
-#define GET_NEXT(ptr) (*(unsigned int *)(ptr) + 1)
-#define GET_PREV(ptr) (*(unsigned int *)(ptr) + 2)
-#define SET_NEXT(ptr, data) (*((unsigned int *) ptr + 1) = data)
-#define SET_PREV(ptr, data) (*((unsigned int *) ptr + 2) = data)
+#define GET_NEXT(ptr) (*((unsigned int *)(ptr) + 1))
+#define GET_PREV(ptr) (*((unsigned int *)(ptr) + 2))
+#define SET_NEXT(ptr, data) (*((unsigned int *)(ptr) + 1) = data)
+#define SET_PREV(ptr, data) (*((unsigned int *)(ptr) + 2) = data)
 
 // Get actual next & prev blocks
-#define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes
-#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - 4)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes
+#define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes, returns char pointer
+#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - 4)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes, returns char pointer
 
 // Format header
 #define FHDR(size, a) (size | a)
+
+#define EXTEND_BY_SIZE 1 << 16 // in bytes
 
 
 void add_block_to_fl(void*);
@@ -84,7 +86,7 @@ void* fl_head;
 
 
 /*
-	Adds a free blocks to start of the free list.
+	Adds a free block to start of the free list.
 */
 void add_block_to_fl(void* block) {
 	if (!block) { // Safety check
@@ -108,15 +110,20 @@ void add_block_to_fl(void* block) {
 	Coalesces with the previous free block (if any).
 	Returns the updated free block if coalescing is done.
 */
-void* move_pbrk(int words) {
+
+void* move_pbrk(int bytes) {
 	// Align to nearest multiple of 'alignment'
-	int bytes = ALIGN(words * WORD_SIZE);
-	
+	bytes = ALIGN(bytes * WORD_SIZE);
+
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
+	
 	if ((*(int *)(bptr)) == -1) { // Memory overflow
-		return -1;
+		return NULL;
 	}
+
+	// printf("PREV FTR ADDR = %p, SIZE = %d\n", (char*)bptr - 4, GET_BLOCK_SIZE((char*)bptr - 4));
+
 
 	// Initialise new free block
 	SET_HDR(bptr, FHDR(bytes, 0));
@@ -124,8 +131,12 @@ void* move_pbrk(int words) {
 	SET_NEXT(bptr, 0);
 	SET_PREV(bptr, 0);
 
+	// Add next dummy block header to prevent overflow
+	SET_HDR(GET_ANEXT(bptr), FHDR(8, 1));
+	SET_FTR(GET_ANEXT(bptr), FHDR(8, 1));
+	
 	// Coalesce with prev free block (if any)
-	bptr = coalesce (bptr);
+	bptr = coalesce(bptr);
 
 	// Add block to list
 	add_block_to_fl(bptr);
@@ -173,15 +184,16 @@ void remove_block_from_fl(void *block) {
 void* coalesce(void* bptr) {
 	void* next_block = GET_ANEXT(bptr);
 	void* prev_block = GET_APREV(bptr);
+	
+	int next_a = next_block ? GET_ALLOC(next_block) : 0;
+	int prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
 
-	int next_a = next_block ? GET_ALLOC(next_block) : 0, prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
-
-	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0, prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
+	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0;
+	unsigned int prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
 
 	int cur_size = GET_BLOCK_SIZE(bptr);
 
 	// Case 1: Prev and next both are allocated, do nothing
-
 	if (!next_a && prev_a) { // Case 2: Prev is allocated, next is free
 		remove_block_from_fl(next_block);
 		cur_size += next_size;
@@ -212,6 +224,63 @@ void* coalesce(void* bptr) {
 	return bptr;
 }
 
+/*
+	Finds the best block to allocate
+	bytes = raw number of bytes required (i.e. including header and footer)
+*/
+void* best_fit(int bytes) {
+	void* itr = fl_head;
+	if (!fl_head) { // Safety check
+		return NULL;
+	}
+	
+	unsigned int best_size = 1 << 31;
+	void* ret = NULL;
+
+	while (itr != 0) {
+		int cur_size = GET_BLOCK_SIZE(itr);
+		if (cur_size >= bytes && cur_size < best_size) {
+			best_size = cur_size;
+			ret = itr;
+		}
+
+		itr = GET_NEXT(itr);
+	}
+
+	return ret;
+}
+
+/*
+	Allocate and split block if required
+	bytes = raw number of bytes required (i.e. including header and footer)
+*/
+void allocate(void* ptr, int bytes) {
+	int block_size = GET_BLOCK_SIZE(ptr);
+	remove_block_from_fl(ptr);
+
+	// Case 1: BLOCK SIZE = bytes, no splitting required 
+	if (block_size == bytes) {
+		SET_HDR(ptr, FHDR(block_size, 1));
+		SET_FTR(ptr, FHDR(block_size, 1));
+
+	} else { // Case 2: BLOCK_SIZE > bytes, split, remove unused chunk and add to the beginning of the list
+		SET_HDR(ptr, FHDR(bytes, 1));
+		SET_FTR(ptr, FHDR(bytes, 1));
+
+		void* next_bptr = GET_ANEXT(ptr);
+		SET_HDR(next_bptr, FHDR(block_size - bytes, 0));
+		SET_FTR(next_bptr, FHDR(block_size - bytes, 0));
+		SET_NEXT(next_bptr, 0);
+		SET_PREV(next_bptr, 0);
+
+		next_bptr = coalesce(next_bptr);
+
+		add_block_to_fl(next_bptr);
+	}
+	
+}
+
+
 
 
 
@@ -234,6 +303,28 @@ int mm_init(void)
 	 * 
 	 * This function will be called multiple time in the driver code "mdriver.c"
 	 */
+
+	mem_reset_brk();
+	fl_head = NULL;
+
+	// Dummy block to prevent segment overflow error
+	void* dbptr = mem_sbrk(8);
+	unsigned int sz = 8;
+	SET_HDR(dbptr, FHDR(sz, 1));
+	SET_FTR(dbptr, FHDR(sz, 1));
+
+	// printf("\nHeader: %d, Addr: %p\n", GET_HDR(dbptr), dbptr);
+	// void* footer_ptr = (char*)dbptr + 4;
+	// tbptr = footer_ptr;
+	// printf("Footer: %d, Addr: %p\n", GET_BLOCK_SIZE(footer_ptr), footer_ptr);
+
+
+	void* res = move_pbrk(EXTEND_BY_SIZE);
+
+	if (res == NULL) {
+		printf("Memory full");
+		return -1;
+	}
 	
     return 0;		//Returns 0 on successfull initialization.
 }
@@ -257,8 +348,28 @@ void *mm_malloc(size_t size)
 		return NULL;
 	}
 	size = ((size+7)/8)*8;		//size alligned to 8 bytes
+
+	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
+
+
+	// Search for block in free list
+	void* best_block = best_fit(req_size);
+	if (best_block != NULL) {
+		allocate(best_block, req_size);
+		return (void*)((char*)best_block + 8); // TODO: Handle alignement correctly
+	}
+
+	// Try to extend program break
+	best_block = move_pbrk(EXTEND_BY_SIZE);
+	if (best_block != NULL) {
+		allocate(best_block, req_size);
+		return (void*)((char*)best_block + 8); // TODO: Handle alignement correctly
+	}
+
+	printf("Could not allocate block\n");
+	return NULL;
 	
-	return mem_sbrk(size);		//mem_sbrk() is wrapper function for the sbrk() system call. 
+	// return mem_sbrk(size);		//mem_sbrk() is wrapper function for the sbrk() system call. 
 								//Please use mem_sbrk() instead of sbrk() otherwise the evaluation results 
 								//may give wrong results
 }
@@ -276,6 +387,23 @@ void mm_free(void *ptr)
 	 * If the freed block is at the end of the heap then you can also decrease the heap size 
 	 * using 'mem_sbrk(-size)'.
 	 */
+
+	if (ptr == NULL) { 
+		return;
+	}
+
+	// Possibly add a check to make sure that only an allocated block is being freed
+
+	// Set allocated bit to zero and coalesce
+	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
+	SET_HDR(bptr, FHDR(GET_BLOCK_SIZE(bptr), 0));
+	SET_FTR(bptr, FHDR(GET_BLOCK_SIZE(bptr), 0));
+	SET_NEXT(bptr, 0);
+	SET_PREV(bptr, 0);
+
+	bptr = coalesce(bptr);
+
+	add_block_to_fl(bptr);
 }
 
 /*
