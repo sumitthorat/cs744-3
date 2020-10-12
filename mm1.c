@@ -129,7 +129,7 @@ void* move_pbrk(int bytes) {
 
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
-	if ((*(int *)(bptr)) == -1) { // Memory overflow
+	if (((int)(bptr)) == -1) { // Memory overflow
 		return NULL;
 	}
 
@@ -139,10 +139,6 @@ void* move_pbrk(int bytes) {
 	SET_NEXT(bptr, 0);
 	SET_PREV(bptr, 0);
 
-	// Add next dummy block header to prevent overflow
-	SET_HDR(GET_ANEXT(bptr), FHDR(8, 1));
-	SET_FTR(GET_ANEXT(bptr), FHDR(8, 1));
-	
 	// Coalesce with prev free block (if any)
 	bptr = coalesce(bptr);
 
@@ -196,6 +192,8 @@ void* coalesce(void* bptr) {
 	
 	int next_a = next_block ? GET_ALLOC(next_block) : 0;
 	int prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
+	if (next_block == mem_sbrk(0))		//this is the last block
+		next_a = 1;
 
 	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0;
 	unsigned int prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
@@ -369,7 +367,6 @@ void *mm_malloc(size_t size)
 
 	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 
-	
 	// Search for block in free list
 	void* best_block = best_fit(req_size);
 	
@@ -475,13 +472,27 @@ void *mm_realloc(void *ptr, size_t size)
         	}
 		return ptr;
 	}
-	else {
-		void *newptr = mm_malloc(size);		// mm_malloc() will take care of the header & footer part
-		if ( newptr == NULL)
-			return NULL;
-		memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
-		mm_free(ptr);
-		return newptr; 
+	else { // Allocate more memory
+		void *pbrk = mem_sbrk(0);
+                if (pbrk == GET_ANEXT(bptr)) // Extend the block
+                {
+                        void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
+                        if (newptr != NULL) {
+                                allocate(newptr, req_size);
+                                return (void*)((char*)newptr + 4);
+                        }
+
+                        return NULL;
+
+                }
+                else { // allocate a new block
+                        void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
+                        if ( newptr == NULL)
+                                return NULL;
+                        memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
+                        mm_free(ptr);
+			return newptr;
+		}
 	}
 }
 
