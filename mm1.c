@@ -90,6 +90,7 @@ void add_block_to_fl(void*);
 void remove_block_from_fl(void*);
 void* move_pbrk(int);
 void* coalesce(void*);
+void* best_fit(int bytes);
 
 void* fl_head;
 
