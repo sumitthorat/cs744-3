@@ -423,7 +423,7 @@ void *mm_malloc(size_t size)
 	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 
 	// Search for block in free list
-	void* best_block = first_fit(req_size);
+	void* best_block = best_fit(req_size);
 	
 	if (best_block != NULL) {
 		allocate(best_block, req_size);

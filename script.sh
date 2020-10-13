@@ -29,10 +29,10 @@ for file in $LIST
 do
 	if [[ $GRADER = "TRUE" ]]
 	then
-		./mdriver1 -ag -f "$FOLDER/$file" | tail -1 | awk 'BEGIN{FS=":"}{print $2}'
+		./mdriver2 -ag -f "$FOLDER/$file" | tail -1 | awk 'BEGIN{FS=":"}{print $2}'
 	else
 		echo -n "$file ->"
-		./mdriver1 -a -f "$FOLDER/$file"
+		./mdriver2 -a -f "$FOLDER/$file"
 		echo
 	fi	
 

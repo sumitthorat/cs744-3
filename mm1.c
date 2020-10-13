@@ -77,10 +77,10 @@ team_t team = {
 #define FHDR(size, a) (size | a)
 
 // Min no bytes to extend heap
-#define EXTEND_BY_SIZE 1 << 12 // in bytes
+#define EXTEND_BY_SIZE (1 << 12) // in bytes
 
 // Utility to find maximum
-#define max(x, y) x > y ? x : y
+#define max(x, y) (x > y ? x : y)
 
 // Minimum bytes for a free block
 #define MIN_FREE_BLOCK_SIZE 16 // 16 = 4W = HDR + FTR + NEXT + PREV
