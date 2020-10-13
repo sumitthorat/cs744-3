@@ -247,6 +247,9 @@ void* best_fit(int bytes) {
 
 	while (itr != 0) {
 		int cur_size = GET_BLOCK_SIZE(itr);
+		if (cur_size == bytes) // we have got the best size
+			return itr;
+		
 		if (cur_size >= bytes && cur_size < best_size) {
 			best_size = cur_size;
 			ret = itr;
