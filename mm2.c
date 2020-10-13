@@ -488,7 +488,7 @@ void *mm_realloc(void *ptr, size_t size)
 		return mm_malloc(size);
 	}
 	
-	if(size == 0){				//new size is zero
+	if(size == 0) {				//new size is zero
 		mm_free(ptr);
 		return NULL;
 	}
@@ -503,31 +503,12 @@ void *mm_realloc(void *ptr, size_t size)
 
 	int block_size = GET_BLOCK_SIZE(bptr);
 	if (req_size <= block_size) {
-	        // Case 1: no splitting required 
-		if (block_size - size <= MIN_FREE_BLOCK_SIZE) {
-                	SET_HDR(bptr, FHDR(block_size, 1));
-                	SET_FTR(bptr, FHDR(block_size, 1));
-		}
-        	else { // Case 2: BLOCK_SIZE > size, split, remove unused chunk and add to the beginning of the list
-                	SET_HDR(bptr, FHDR(req_size, 1));
-                	SET_FTR(bptr, FHDR(req_size, 1));
-                
-			void* next_bptr = GET_ANEXT(bptr);
-                	SET_HDR(next_bptr, FHDR(block_size - req_size, 0));
-                	SET_FTR(next_bptr, FHDR(block_size - req_size, 0));
-                	SET_NEXT(next_bptr, 0);
-                	SET_PREV(next_bptr, 0);
-
-                	next_bptr = coalesce(next_bptr);
-
-                	add_block_to_fl(next_bptr);
-        	}
-		return ptr;
-	}
+		allocate(bptr,req_size);
+		return (void*)((char*)bptr + 4);
+	} 
 	else { // Allocate more memory
 		void *pbrk = mem_sbrk(0);
-                if (pbrk == GET_ANEXT(bptr)) // Extend the block
-                {
+                if (pbrk == GET_ANEXT(bptr)) { // Extend the block
                         void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
                         if (newptr != NULL) {
                                 allocate(newptr, req_size);
@@ -535,18 +516,21 @@ void *mm_realloc(void *ptr, size_t size)
                         }
 
                         return NULL;
-
                 }
                 else { // allocate a new block
                         void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
-                        if ( newptr == NULL)
+                        if (newptr == NULL)
                                 return NULL;
-                        memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
+                        
+			memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
                         mm_free(ptr);
 			return newptr;
 		}
+
 	}
+
 }
+
 
 
 
