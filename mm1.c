@@ -44,8 +44,10 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-#define WPTR (unsigned int *)
+#define WPTR unsigned int *
 #define WORD_SIZE 4 // 1W = 4B
+#define FTR_SIZE 4
+#define HDR_SIZE 4
 
 // Get and set word pointed by ptr
 #define GET_WORD(ptr) (*(unsigned int *)(ptr))
@@ -58,29 +60,37 @@ team_t team = {
 // Get and set block header and footer
 #define GET_HDR(ptr) (*(unsigned int *)(ptr))
 #define SET_HDR(ptr, data) (*(unsigned int *)(ptr) = data)
-#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4))
-#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - 4) = data)
+#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE))
+#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE) = data)
 
 // Get and set Next/Prev pointers in free blocks
 #define GET_NEXT(ptr) (*((unsigned int *)(ptr) + 1))
 #define GET_PREV(ptr) (*((unsigned int *)(ptr) + 2))
-#define SET_NEXT(ptr, data) (*((unsigned int *)(ptr) + 1) = data)
-#define SET_PREV(ptr, data) (*((unsigned int *)(ptr) + 2) = data)
+#define SET_NEXT(ptr, data) (*((unsigned int *) ptr + 1) = data)
+#define SET_PREV(ptr, data) (*((unsigned int *) ptr + 2) = data)
 
 // Get actual next & prev blocks
-#define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes, returns char pointer
-#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - 4)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes, returns char pointer
+#define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes
+#define GET_APREV(ptr) ((char*)(ptr) - GET_BLOCK_SIZE((char*)(ptr) - FTR_SIZE)) // Convert to 1B pointer, move back 4 bytes, get block size and move back BLOCK_SIZE bytes
 
 // Format header
 #define FHDR(size, a) (size | a)
 
-#define EXTEND_BY_SIZE 1 << 16 // in bytes
+// Min no bytes to extend heap
+#define EXTEND_BY_SIZE 1 << 12 // in bytes
+
+// Utility to find maximum
+#define max(x, y) x > y ? x : y
+
+// Minimum bytes for a free block
+#define MIN_FREE_BLOCK_SIZE 16 // 16 = 4W = HDR + FTR + NEXT + PREV
 
 
 void add_block_to_fl(void*);
 void remove_block_from_fl(void*);
 void* move_pbrk(int);
 void* coalesce(void*);
+void* best_fit(int bytes);
 
 void* fl_head;
 
@@ -95,12 +105,16 @@ void add_block_to_fl(void* block) {
 
 	if (!fl_head) {
 		fl_head = block;
+		SET_PREV(fl_head,NULL);
+		SET_NEXT(fl_head,NULL);
 		return;
 	}
 
-	// Always add block to head of the free list
 	SET_PREV(fl_head, block);
 	SET_NEXT(block, fl_head);
+	
+	SET_PREV(block,NULL);
+
 	fl_head = block;
 }
 
@@ -110,20 +124,15 @@ void add_block_to_fl(void* block) {
 	Coalesces with the previous free block (if any).
 	Returns the updated free block if coalescing is done.
 */
-
 void* move_pbrk(int bytes) {
 	// Align to nearest multiple of 'alignment'
-	bytes = ALIGN(bytes * WORD_SIZE);
+	bytes = ALIGN(bytes);
 
 	// Request for space
 	void* bptr = mem_sbrk(bytes);
-	
-	if ((*(int *)(bptr)) == -1) { // Memory overflow
+	if (((int)(bptr)) == -1) { // Memory overflow
 		return NULL;
 	}
-
-	// printf("PREV FTR ADDR = %p, SIZE = %d\n", (char*)bptr - 4, GET_BLOCK_SIZE((char*)bptr - 4));
-
 
 	// Initialise new free block
 	SET_HDR(bptr, FHDR(bytes, 0));
@@ -131,10 +140,6 @@ void* move_pbrk(int bytes) {
 	SET_NEXT(bptr, 0);
 	SET_PREV(bptr, 0);
 
-	// Add next dummy block header to prevent overflow
-	SET_HDR(GET_ANEXT(bptr), FHDR(8, 1));
-	SET_FTR(GET_ANEXT(bptr), FHDR(8, 1));
-	
 	// Coalesce with prev free block (if any)
 	bptr = coalesce(bptr);
 
@@ -160,6 +165,7 @@ void remove_block_from_fl(void *block) {
 	// Case 2: Head node i.e. prev = 0 and next != 0
 	if (!GET_PREV(block) && GET_NEXT(block)) {
 		fl_head = GET_NEXT(block);
+		SET_PREV(fl_head, NULL);
 		return;
 	}
 
@@ -168,7 +174,7 @@ void remove_block_from_fl(void *block) {
 		SET_NEXT(GET_PREV(block), 0);
 		return;
 	}
-
+	
 	// Case 4: Middle node
 	void* prev_block = GET_PREV(block);
 	void* next_block = GET_NEXT(block);
@@ -187,6 +193,8 @@ void* coalesce(void* bptr) {
 	
 	int next_a = next_block ? GET_ALLOC(next_block) : 0;
 	int prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
+	if (next_block == mem_sbrk(0))		//this is the last block
+		next_a = 1;
 
 	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0;
 	unsigned int prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
@@ -214,7 +222,7 @@ void* coalesce(void* bptr) {
 		remove_block_from_fl(next_block);
 		remove_block_from_fl(prev_block);
 		cur_size += (next_size + prev_size);
-		// Order is important sinze, FTR location calculation makes use of size in HDR
+		// Order is important since, FTR location calculation makes use of size in HDR
 		SET_HDR(prev_block, FHDR(cur_size, 0));
 		SET_FTR(prev_block, FHDR(cur_size, 0));
 
@@ -259,7 +267,7 @@ void allocate(void* ptr, int bytes) {
 	remove_block_from_fl(ptr);
 
 	// Case 1: BLOCK SIZE = bytes, no splitting required 
-	if (block_size == bytes) {
+	if (block_size - bytes <= MIN_FREE_BLOCK_SIZE) {
 		SET_HDR(ptr, FHDR(block_size, 1));
 		SET_FTR(ptr, FHDR(block_size, 1));
 
@@ -305,18 +313,27 @@ int mm_init(void)
 	 */
 
 	mem_reset_brk();
+	void *ptr = (char*)mem_sbrk(0);
+	int mask = (int)((unsigned int)ptr&0x7);
+	if (mask == 0)
+		ptr = mem_sbrk(4);
+	else if (mask >= 1 && mask <= 4)
+		ptr = mem_sbrk(4 - mask); 
+	else
+		ptr = mem_sbrk(12 - mask);
+
+	/* Make the program break divisible by 4 but not by 8 (i.e. ALIGNMENT). 
+	 * Since we always allocate multiple of 8B blocks (including header & footer), the same constraint will be maintained afterwards.
+	 * Reason: When we allocate blocks we need to allocate 4B of block header as well.
+	 * So everytime the pointer to the actual block (not block header) is point to address which is multiple of 8 (that means aligned by 8 bytes)
+	 */
 	fl_head = NULL;
 
 	// Dummy block to prevent segment overflow error
-	void* dbptr = mem_sbrk(8);
 	unsigned int sz = 8;
+	void* dbptr = mem_sbrk(sz);
 	SET_HDR(dbptr, FHDR(sz, 1));
 	SET_FTR(dbptr, FHDR(sz, 1));
-
-	// printf("\nHeader: %d, Addr: %p\n", GET_HDR(dbptr), dbptr);
-	// void* footer_ptr = (char*)dbptr + 4;
-	// tbptr = footer_ptr;
-	// printf("Footer: %d, Addr: %p\n", GET_BLOCK_SIZE(footer_ptr), footer_ptr);
 
 
 	void* res = move_pbrk(EXTEND_BY_SIZE);
@@ -351,19 +368,19 @@ void *mm_malloc(size_t size)
 
 	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 
-
 	// Search for block in free list
 	void* best_block = best_fit(req_size);
+	
 	if (best_block != NULL) {
 		allocate(best_block, req_size);
-		return (void*)((char*)best_block + 8); // TODO: Handle alignement correctly
+		return (void*)((char*)best_block + 4); 
 	}
-
+	
 	// Try to extend program break
-	best_block = move_pbrk(EXTEND_BY_SIZE);
+	best_block = move_pbrk(max(req_size, EXTEND_BY_SIZE));
 	if (best_block != NULL) {
 		allocate(best_block, req_size);
-		return (void*)((char*)best_block + 8); // TODO: Handle alignement correctly
+		return (void*)((char*)best_block + 4); 
 	}
 
 	printf("Could not allocate block\n");
@@ -412,12 +429,15 @@ void mm_free(void *ptr)
 void *mm_realloc(void *ptr, size_t size)
 {	
 	size = ((size+7)/8)*8; //8-byte alignement	
+	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 	
-	if(ptr == NULL){			//memory was not previously allocated
+	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
+
+	if(ptr == NULL) {	//memory was not previously allocated
 		return mm_malloc(size);
 	}
 	
-	if(size == 0){				//new size is zero
+	if(size == 0) {				//new size is zero
 		mm_free(ptr);
 		return NULL;
 	}
@@ -430,9 +450,34 @@ void *mm_realloc(void *ptr, size_t size)
 	 * blocks should also be updated.
 	*/
 
-	mm_free(ptr);
-	return mem_sbrk(size);
-	
+	int block_size = GET_BLOCK_SIZE(bptr);
+	if (req_size <= block_size) {
+		allocate(bptr,req_size);
+		return (void*)((char*)bptr + 4);
+	} 
+	else { // Allocate more memory
+		void *pbrk = mem_sbrk(0);
+                if (pbrk == GET_ANEXT(bptr)) { // Extend the block
+                        void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
+                        if (newptr != NULL) {
+                                allocate(newptr, req_size);
+                                return (void*)((char*)newptr + 4);
+                        }
+
+                        return NULL;
+                }
+                else { // allocate a new block
+                        void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
+                        if (newptr == NULL)
+                                return NULL;
+                        
+			memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
+                        mm_free(ptr);
+			return newptr;
+		}
+
+	}
+
 }
 
 

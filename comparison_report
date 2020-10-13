@@ -1,0 +1,8 @@
+			First		Best		Worst		Best Performer
+binary-bal.rep		(33+40)=73	(33+14)=47	(33+14)=47	First Fit
+cp-decl-bal.rep		(56+40)=96	(60+40)=100	(57+40)=97	Best Fit
+random-bal.rep		(52+40)=92	(57+40)=97	(49+40)=89	Best Fit
+realloc-bal.rep		(16+5)=21	(19+5)=24	(16+4)=20	Best Fit
+short1-bal.rep		(40+40)=80	(40+40)=80	(40+40)=80	-
+short2-bal.rep		(54+40)=94	(54+40)=94	(54+40)=94	-
+short3-bal.rep		(60+40)=100	(60+40)=100	(60+40)=100	-

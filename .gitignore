@@ -1,2 +1,6 @@
 ._*
+*.o
+mdriver*
+.vscode
+REFERENCE
 .vscode
