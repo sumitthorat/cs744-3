@@ -103,9 +103,6 @@ WPTR add_block_to_tree(WPTR ptr);
 WPTR insert_block(WPTR node, WPTR ptr);
 
 WPTR inorder_successor(WPTR node);
-WPTR insert_block(WPTR node, WPTR ptr);
-
-WPTR inorder_successor(WPTR node);
 WPTR remove_block_from_tree(WPTR ptr);
 WPTR remove_block(WPTR node, WPTR ptr, WPTR parent);
 
@@ -118,8 +115,8 @@ void* first_fit(int bytes);
 WPTR leftRotate(WPTR x) {
 	WPTR y = GET_RIGHT(x);
 	WPTR T2 = GET_LEFT(y);
-	SET_LEFT(y,x);
-	SET_RIGHT(x,T2);
+	SET_LEFT(y, x);
+	SET_RIGHT(x, T2);
 	SET_HEIGHT(x);
 	SET_HEIGHT(y);
 	return y;
@@ -128,8 +125,8 @@ WPTR leftRotate(WPTR x) {
 WPTR rightRotate(WPTR y) {
 	WPTR x = GET_LEFT(y);
 	WPTR T2 = GET_RIGHT(x);
-	SET_RIGHT(x,y);
-	SET_LEFT(y,T2);
+	SET_RIGHT(x, y);
+	SET_LEFT(y, T2);
 	SET_HEIGHT(x);
 	SET_HEIGHT(y);
 	return x;
@@ -139,9 +136,9 @@ WPTR rightRotate(WPTR y) {
 	Reset Left/Right/Next pointers of the block
 */
 void reset_pointers(WPTR ptr) {
-	SET_NEXT(ptr,NULL);
-	SET_LEFT(ptr,NULL);
-	SET_RIGHT(ptr,NULL);
+	SET_NEXT(ptr, NULL);
+	SET_LEFT(ptr, NULL);
+	SET_RIGHT(ptr, NULL);
 	SET_HEIGHT(ptr);
 }
 
@@ -150,7 +147,7 @@ void reset_pointers(WPTR ptr) {
 */
 WPTR add_block_to_tree(WPTR ptr) {
 	reset_pointers(ptr);
-	root = insert_block(root,ptr);
+	root = insert_block(root, ptr);
 }
 
 /*
@@ -162,12 +159,12 @@ WPTR insert_block(WPTR node, WPTR ptr) {
 	
 	int block_size = GET_BLOCK_SIZE(ptr);
 	if (block_size < GET_BLOCK_SIZE(node))
-		SET_LEFT(node,insert_block(GET_LEFT(node),ptr));
+		SET_LEFT(node, insert_block(GET_LEFT(node), ptr));
 	else if (block_size > GET_BLOCK_SIZE(node))
-		SET_RIGHT(node,insert_block(GET_RIGHT(node),ptr));
+		SET_RIGHT(node, insert_block(GET_RIGHT(node), ptr));
 	else {
-		SET_NEXT(ptr,GET_NEXT(node));
-		SET_NEXT(node,ptr);
+		SET_NEXT(ptr, GET_NEXT(node));
+		SET_NEXT(node, ptr);
 		return node;
 	}
 
@@ -179,11 +176,11 @@ WPTR insert_block(WPTR node, WPTR ptr) {
 	else if (balance_factor < -1 && block_size > GET_BLOCK_SIZE(GET_RIGHT(node))) // case-2 Right Right
 		return leftRotate(node);
 	else if (balance_factor > 1 && block_size > GET_BLOCK_SIZE(GET_LEFT(node))) { // case-3 Left Right
-		SET_LEFT(node,leftRotate(GET_LEFT(node)));
+		SET_LEFT(node, leftRotate(GET_LEFT(node)));
 		return rightRotate(node);
 	}
 	else if (balance_factor < -1 && block_size < GET_BLOCK_SIZE(GET_RIGHT(node))) { // case-4 Right left
-		SET_RIGHT(node,rightRotate(GET_RIGHT(node)));
+		SET_RIGHT(node, rightRotate(GET_RIGHT(node)));
 		return leftRotate(node);
 	}
 
@@ -205,7 +202,7 @@ WPTR inorder_successor(WPTR node) {
 	Driver function to insert block in the free blocks tree
 */
 WPTR remove_block_from_tree(WPTR ptr) {
-	root = remove_block(root,ptr,NULL);
+	root = remove_block(root, ptr, NULL);
 }
 /*
 	function to actually insert blocks into the free blocks tree
@@ -216,18 +213,18 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 	
 	int block_size = GET_BLOCK_SIZE(ptr);
 	if (block_size < GET_BLOCK_SIZE(node)) 
-		SET_LEFT(node,remove_block(GET_LEFT(node),ptr,node));
+		SET_LEFT(node, remove_block(GET_LEFT(node), ptr, node));
 	else if (block_size > GET_BLOCK_SIZE(node)) 
-		SET_RIGHT(node,remove_block(GET_RIGHT(node),ptr,node));
+		SET_RIGHT(node, remove_block(GET_RIGHT(node), ptr, node));
 	else {
 		if (!GET_NEXT(node)) { // There is more than 1 block with the size same as this block. So node deletion is not required from tree
 			if (node == ptr) { // The node itself is the block we are searching for
-				SET_LEFT(GET_NEXT(node),GET_LEFT(node));
-				SET_RIGHT(GET_NEXT(node),GET_RIGHT(node));
+				SET_LEFT(GET_NEXT(node), GET_LEFT(node));
+				SET_RIGHT(GET_NEXT(node), GET_RIGHT(node));
 				if (GET_LEFT(parent) == node)
-					SET_LEFT(parent,GET_NEXT(node));
+					SET_LEFT(parent, GET_NEXT(node));
 				else 
-					SET_RIGHT(parent,GET_NEXT(node));
+					SET_RIGHT(parent, GET_NEXT(node));
 				
 				return GET_NEXT(node);
 			}
@@ -240,7 +237,7 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 				}
 
 				// curr == ptr ; we found the block, remove it 
-				SET_NEXT(prev,GET_NEXT(curr));
+				SET_NEXT(prev, GET_NEXT(curr));
 				return node;
 			}
 		}
@@ -253,12 +250,12 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 				WPTR inorder_succ = inorder_successor(node);
 
 				if (GET_LEFT(parent) == node)
-					SET_LEFT(parent,inorder_succ);
+					SET_LEFT(parent, inorder_succ);
 				else
-					SET_RIGHT(parent,inorder_succ);
+					SET_RIGHT(parent, inorder_succ);
 				
-				SET_RIGHT(inorder_succ,remove_block(GET_RIGHT(node),inorder_succ,node));
-				SET_LEFT(inorder_succ,GET_LEFT(node));
+				SET_RIGHT(inorder_succ, remove_block(GET_RIGHT(node), inorder_succ, node));
+				SET_LEFT(inorder_succ, GET_LEFT(node));
 				node = ptr;
 			}
 		}
@@ -268,12 +265,12 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 	int balance_factor = GET_BALANCE(node);
 
 	// Left Left Case  
-    if (balance_factor > 1 &&  GET_BALANCE(GET_LEFT(node)) >= 0)  
+    if (balance_factor > 1 && GET_BALANCE(GET_LEFT(node)) >= 0)  
     	return rightRotate(root);  
   
     // Left Right Case  
     if (balance_factor > 1 && GET_BALANCE(GET_LEFT(node)) < 0) {  
-		SET_LEFT(node,leftRotate(GET_LEFT(node)));
+		SET_LEFT(node, leftRotate(GET_LEFT(node)));
         return rightRotate(root);  
     }  
   
@@ -283,7 +280,7 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
   
     // Right Left Case  
     if (balance_factor < -1 && GET_BALANCE(GET_RIGHT(node)) > 0) {  
-        SET_RIGHT(node,rightRotate(GET_RIGHT(node)));
+        SET_RIGHT(node, rightRotate(GET_RIGHT(node)));
         return leftRotate(root);  
     }  
 
@@ -663,5 +660,3 @@ void* coalesce(void* bptr) {
 // 	}
 
 // }
-
-
