@@ -6,9 +6,3 @@ realloc-bal.rep		(16+5)=21	(19+5)=24	(16+4)=20	Best Fit
 short1-bal.rep		(40+40)=80	(40+40)=80	(40+40)=80	-
 short2-bal.rep		(54+40)=94	(54+40)=94	(54+40)=94	-
 short3-bal.rep		(60+40)=100	(60+40)=100	(60+40)=100	-
-
-
-ON tracefiles/		SUM_OF_PERF_IDX
-Best Fit 		1982
-Worst Fit 		1905
-First Fit 		2046
