@@ -105,6 +105,10 @@ WPTR insert_block(WPTR node, WPTR ptr);
 WPTR inorder_successor(WPTR node);
 WPTR insert_block(WPTR node, WPTR ptr);
 
+WPTR inorder_successor(WPTR node);
+WPTR remove_block_from_tree(WPTR ptr);
+WPTR remove_block(WPTR node, WPTR ptr, WPTR parent);
+
 void* move_pbrk(int);
 void* coalesce(void*);
 void* best_fit(int bytes);
@@ -198,6 +202,12 @@ WPTR inorder_successor(WPTR node) {
 }
 
 /*
+	Driver function to insert block in the free blocks tree
+*/
+WPTR remove_block_from_tree(WPTR ptr) {
+	root = remove_block(root,ptr,NULL);
+}
+/*
 	function to actually insert blocks into the free blocks tree
 */
 WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
@@ -279,119 +289,85 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 
 	return node;
 }
-// /*
-// 	Uses the mem_sbrk(bytes) call to move the program break. 
-// 	Treats the extended chunk as a new free block.
-// 	Coalesces with the previous free block (if any).
-// 	Returns the updated free block if coalescing is done.
-// */
-// void* move_pbrk(int bytes) {
-// 	// Align to nearest multiple of 'alignment'
-// 	bytes = ALIGN(bytes);
+/*
+	Uses the mem_sbrk(bytes) call to move the program break. 
+	Treats the extended chunk as a new free block.
+	Coalesces with the previous free block (if any).
+	Returns the updated free block if coalescing is done.
+*/
+void* move_pbrk(int bytes) {
+	// Align to nearest multiple of 'alignment'
+	bytes = ALIGN(bytes);
 
-// 	// Request for space
-// 	void* bptr = mem_sbrk(bytes);
-// 	if (((int)(bptr)) == -1) { // Memory overflow
-// 		return NULL;
-// 	}
+	// Request for space
+	void* bptr = mem_sbrk(bytes);
+	if (((int)(bptr)) == -1) { // Memory overflow
+		return NULL;
+	}
 
-// 	// Initialise new free block
-// 	SET_HDR(bptr, FHDR(bytes, 0));
-// 	SET_FTR(bptr, FHDR(bytes, 0));
-// 	SET_NEXT(bptr, 0);
-// 	SET_PREV(bptr, 0);
+	// Initialise new free block
+	SET_HDR(bptr, FHDR(bytes, 0));
+	SET_FTR(bptr, FHDR(bytes, 0));
+	SET_NEXT(bptr, 0);
+	SET_PREV(bptr, 0);
 
-// 	// Coalesce with prev free block (if any)
-// 	bptr = coalesce(bptr);
+	// Coalesce with prev free block (if any)
+	bptr = coalesce(bptr);
 
-// 	// Add block to list
-// 	add_block_to_fl(bptr);
+	// Add block to list
+	add_block_to_tree(bptr);
 
-// 	return bptr;
-// }
+	return bptr;
+}
 
-
-// /*
-// 	Removes a block from the free list.
-// */
-// void remove_block_from_fl(void *block) {
-// 	// TODO: Safety check if required
-
-// 	// Case 1: Only node i.e next = 0 & prev = 0
-// 	if (!GET_NEXT(block) && !GET_PREV(block)) {
-// 		fl_head = NULL;
-// 		return;
-// 	}
-
-// 	// Case 2: Head node i.e. prev = 0 and next != 0
-// 	if (!GET_PREV(block) && GET_NEXT(block)) {
-// 		fl_head = GET_NEXT(block);
-// 		SET_PREV(fl_head, NULL);
-// 		return;
-// 	}
-
-// 	// Case 3: Last node i.e prev != 0 and next = 0
-// 	if (GET_PREV(block) && !GET_NEXT(block)) {
-// 		SET_NEXT(GET_PREV(block), 0);
-// 		return;
-// 	}
+/*
+	Takes as input a free block and tries to coalesce with adjacent free blocks if any.
+	Returns updated block if any coalescing was done.
+*/
+void* coalesce(void* bptr) {
+	void* next_block = GET_ANEXT(bptr);
+	void* prev_block = GET_APREV(bptr);
 	
-// 	// Case 4: Middle node
-// 	void* prev_block = GET_PREV(block);
-// 	void* next_block = GET_NEXT(block);
+	int next_a = next_block ? GET_ALLOC(next_block) : 0;
+	int prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
+	if (next_block == mem_sbrk(0))		//this is the last block
+		next_a = 1;
 
-// 	SET_NEXT(prev_block, next_block);
-// 	SET_PREV(next_block, prev_block);
-// }
+	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0;
+	unsigned int prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
 
-// /*
-// 	Takes as input a free block and tries to coalesce with adjacent free blocks if any.
-// 	Returns updated block if any coalescing was done.
-// */
-// void* coalesce(void* bptr) {
-// 	void* next_block = GET_ANEXT(bptr);
-// 	void* prev_block = GET_APREV(bptr);
-	
-// 	int next_a = next_block ? GET_ALLOC(next_block) : 0;
-// 	int prev_a = prev_block ? GET_ALLOC(prev_block) : 0;
-// 	if (next_block == mem_sbrk(0))		//this is the last block
-// 		next_a = 1;
+	int cur_size = GET_BLOCK_SIZE(bptr);
 
-// 	unsigned int next_size = next_block ? GET_BLOCK_SIZE(next_block) : 0;
-// 	unsigned int prev_size = prev_block ? GET_BLOCK_SIZE(prev_block) : 0;
+	// Case 1: Prev and next both are allocated, do nothing
+	if (!next_a && prev_a) { // Case 2: Prev is allocated, next is free
+		remove_block_from_tree(next_block);
+		cur_size += next_size;
+		// Order is important sinze, FTR location calculation makes use of size in HDR
+		SET_HDR(bptr, FHDR(cur_size, 0));
+		SET_FTR(bptr, FHDR(cur_size, 0));
 
-// 	int cur_size = GET_BLOCK_SIZE(bptr);
-
-// 	// Case 1: Prev and next both are allocated, do nothing
-// 	if (!next_a && prev_a) { // Case 2: Prev is allocated, next is free
-// 		remove_block_from_fl(next_block);
-// 		cur_size += next_size;
-// 		// Order is important sinze, FTR location calculation makes use of size in HDR
-// 		SET_HDR(bptr, FHDR(cur_size, 0));
-// 		SET_FTR(bptr, FHDR(cur_size, 0));
-
-// 	} else if (next_a && !prev_a) { // Case 3: Next is allocated, prev is free
-// 		remove_block_from_fl(prev_block);
-// 		cur_size += prev_size;
-// 		// Order is important sinze, FTR location calculation makes use of size in HDR
-// 		SET_HDR(prev_block, FHDR(cur_size, 0));
-// 		SET_FTR(prev_block, FHDR(cur_size, 0));
+	} else if (next_a && !prev_a) { // Case 3: Next is allocated, prev is free
+		remove_block_from_tree(prev_block);
+		cur_size += prev_size;
+		// Order is important sinze, FTR location calculation makes use of size in HDR
+		SET_HDR(prev_block, FHDR(cur_size, 0));
+		SET_FTR(prev_block, FHDR(cur_size, 0));
 		
-// 		bptr = prev_block;
+		bptr = prev_block;
 
-// 	} else if (!next_a && !prev_a){ // Case 4: Prev and next both are free
-// 		remove_block_from_fl(next_block);
-// 		remove_block_from_fl(prev_block);
-// 		cur_size += (next_size + prev_size);
-// 		// Order is important since, FTR location calculation makes use of size in HDR
-// 		SET_HDR(prev_block, FHDR(cur_size, 0));
-// 		SET_FTR(prev_block, FHDR(cur_size, 0));
+	} else if (!next_a && !prev_a){ // Case 4: Prev and next both are free
+		remove_block_from_tree(next_block);
+		remove_block_from_tree(prev_block);
+		cur_size += (next_size + prev_size);
+		// Order is important since, FTR location calculation makes use of size in HDR
+		SET_HDR(prev_block, FHDR(cur_size, 0));
+		SET_FTR(prev_block, FHDR(cur_size, 0));
 
-// 		bptr = prev_block;
-// 	}
+		bptr = prev_block;
+	}
 
-// 	return bptr;
-// }
+	return bptr;
+}
 
 // /*
 // 	Finds the best block to allocate
