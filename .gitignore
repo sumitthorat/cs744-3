@@ -4,3 +4,7 @@ mdriver*
 .vscode
 REFERENCE
 .vscode
+a.out
+testing_bbst.txt
+tracefiles/*
+.gitignore

@@ -35,14 +35,14 @@ team_t team = {
     "member_2@cse.iitb.ac.in"
 };
 
+// Utility to find maximum
+#define max(x, y) (x > y ? x : y)
+
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
 
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
-
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 #define WPTR unsigned int *
 #define WORD_SIZE 4 // 1W = 4B
@@ -50,24 +50,32 @@ team_t team = {
 #define HDR_SIZE 4
 
 // Get and set word pointed by ptr
-#define GET_WORD(ptr) (*(unsigned int *)(ptr))
-#define SET_WORD(ptr, data) ((*(unsigned int *)(ptr)) = data)
+#define GET_WORD(ptr) (*(WPTR)(ptr))
+#define SET_WORD(ptr, data) ((*(WPTR)(ptr)) = data)
 
 // Get block size and alloc bit
 #define GET_BLOCK_SIZE(ptr) (GET_WORD(ptr) & ~0x1)
 #define GET_ALLOC(ptr) (GET_WORD(ptr) & 0x1)
 
 // Get and set block header and footer
-#define GET_HDR(ptr) (*(unsigned int *)(ptr))
-#define SET_HDR(ptr, data) (*(unsigned int *)(ptr) = data)
-#define GET_FTR(ptr) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE))
-#define SET_FTR(ptr, data) (*(unsigned int *)((char*)(ptr) + GET_BLOCK_SIZE(ptr) - FTR_SIZE) = data)
+#define GET_HDR(ptr) (*(WPTR)(ptr))
+#define SET_HDR(ptr, data) (*(WPTR)ptr = data)
+#define GET_FTR(ptr) (*(WPTR)((char*)ptr + GET_BLOCK_SIZE(ptr) - FTR_SIZE))
+#define SET_FTR(ptr, data) (*(WPTR)((char*)ptr + GET_BLOCK_SIZE(ptr) - FTR_SIZE) = data)
 
-// Get and set Next/Prev pointers in free blocks
-#define GET_NEXT(ptr) (*((unsigned int *)(ptr) + 1))
-#define GET_PREV(ptr) (*((unsigned int *)(ptr) + 2))
-#define SET_NEXT(ptr, data) (*((unsigned int *) ptr + 1) = data)
-#define SET_PREV(ptr, data) (*((unsigned int *) ptr + 2) = data)
+// Get and set Left/Right pointers in free blocks tree
+#define GET_LEFT(ptr) (*((WPTR)ptr + 1))
+#define GET_RIGHT(ptr) (*((WPTR)ptr + 2))
+#define SET_LEFT(ptr, data) (*((WPTR)ptr + 1) = data)
+#define SET_RIGHT(ptr, data) (*((WPTR)ptr + 2) = data)
+
+// Get and set pointer to the next same size block in free blocks tree
+#define GET_NEXT(ptr) (*((WPTR)ptr + 3))
+#define SET_NEXT(ptr, data) (*((WPTR) ptr + 3) = data)
+
+// Get and set Height of the free block in free blocks tree
+#define GET_HEIGHT(ptr) (ptr ? (*((WPTR)ptr + 4)) : 0)
+#define SET_HEIGHT(ptr) (*((WPTR)ptr + 4) = 1 + max(GET_HEIGHT(GET_LEFT(ptr)), GET_HEIGHT(GET_RIGHT(ptr))))
 
 // Get actual next & prev blocks
 #define GET_ANEXT(ptr) (GET_BLOCK_SIZE(ptr) + (char*)(ptr)) // Convert to 1B pointer, move ahead BLOCK_SIZE bytes
@@ -77,47 +85,261 @@ team_t team = {
 #define FHDR(size, a) (size | a)
 
 // Min no bytes to extend heap
-#define EXTEND_BY_SIZE 1 << 12 // in bytes
-
-// Utility to find maximum
-#define max(x, y) x > y ? x : y
+#define EXTEND_BY_SIZE (1 << 12) // in bytes
 
 // Minimum bytes for a free block
-#define MIN_FREE_BLOCK_SIZE 16 // 16 = 4W = HDR + FTR + NEXT + PREV
+#define MIN_FREE_BLOCK_SIZE 24 // 24 = 6W = HDR + FTR + NEXT + LEFT + RIGHT + HEIGHT 
 
+// Get balance factor of the Node
+#define GET_BALANCE(ptr) (ptr ? (int)(GET_HEIGHT(GET_LEFT(ptr)) - GET_HEIGHT(GET_RIGHT(ptr))) : 0)
 
-void add_block_to_fl(void*);
-void remove_block_from_fl(void*);
+WPTR root;
+void *init_mem_sbrk_break = NULL;
+
+WPTR leftRotate(WPTR x);
+WPTR rightRotate(WPTR y);
+void reset_pointers(WPTR ptr);
+WPTR add_block_to_tree(WPTR ptr);
+WPTR insert_block(WPTR node, WPTR ptr);
+
+WPTR inorder_successor(WPTR node);
+WPTR remove_block_from_tree(WPTR ptr);
+WPTR remove_block(WPTR node, WPTR ptr, int);
+WPTR find_best_in_tree(WPTR cur, int size);
+
 void* move_pbrk(int);
 void* coalesce(void*);
 void* best_fit(int bytes);
 void* worst_fit(int bytes);
 void* first_fit(int bytes);
 
-void* fl_head;
+void find_best(WPTR cur, int size);
 
+WPTR leftRotate(WPTR x) {
+	WPTR y = GET_RIGHT(x);
+	WPTR T2 = GET_LEFT(y);
+	SET_LEFT(y, x);
+	SET_RIGHT(x, T2);
+	SET_HEIGHT(x);
+	SET_HEIGHT(y);
+	return y;
+}
+
+WPTR rightRotate(WPTR y) {
+	WPTR x = GET_LEFT(y);
+	WPTR T2 = GET_RIGHT(x);
+	SET_RIGHT(x, y);
+	SET_LEFT(y, T2);
+	SET_HEIGHT(y);
+	SET_HEIGHT(x);
+	return x;
+}
 
 /*
-	Adds a free block to start of the free list.
+	Reset Left/Right/Next pointers of the block
 */
-void add_block_to_fl(void* block) {
-	if (!block) { // Safety check
-		return;
-	}
+void reset_pointers(WPTR ptr) {
+	SET_NEXT(ptr, NULL);
+	SET_LEFT(ptr, NULL);
+	SET_RIGHT(ptr, NULL);
+	SET_HEIGHT(ptr);
+}
 
-	if (!fl_head) {
-		fl_head = block;
-		SET_PREV(fl_head,NULL);
-		SET_NEXT(fl_head,NULL);
-		return;
-	}
+/*
+	Driver function to insert block in the free blocks tree
+*/
+WPTR add_block_to_tree(WPTR ptr) {
+	reset_pointers(ptr);
+	root = insert_block(root, ptr);
+}
 
-	SET_PREV(fl_head, block);
-	SET_NEXT(block, fl_head);
+/*
+	function to actually insert blocks into the free blocks tree
+*/
+WPTR insert_block(WPTR node, WPTR ptr) {
+	if (node == NULL)
+		return ptr;
 	
-	SET_PREV(block,NULL);
+	int block_size = GET_BLOCK_SIZE(ptr);
 
-	fl_head = block;
+	if (block_size < GET_BLOCK_SIZE(node))
+		SET_LEFT(node, insert_block(GET_LEFT(node), ptr));
+	else if (block_size > GET_BLOCK_SIZE(node))
+		SET_RIGHT(node, insert_block(GET_RIGHT(node), ptr));
+	else {
+		SET_NEXT(ptr, GET_NEXT(node));
+		SET_NEXT(node, ptr);
+		return node;
+	}
+
+	SET_HEIGHT(node);
+	int balance_factor = GET_BALANCE(node);
+
+	if (balance_factor > 1 && block_size < GET_BLOCK_SIZE(GET_LEFT(node))) // case-1 Left left
+		return rightRotate(node);
+	else if (balance_factor < -1 && block_size > GET_BLOCK_SIZE(GET_RIGHT(node))) // case-2 Right Right
+		return leftRotate(node);
+	else if (balance_factor > 1 && block_size > GET_BLOCK_SIZE(GET_LEFT(node))) { // case-3 Left Right
+		SET_LEFT(node, leftRotate(GET_LEFT(node)));
+		return rightRotate(node);
+	}
+	else if (balance_factor < -1 && block_size < GET_BLOCK_SIZE(GET_RIGHT(node))) { // case-4 Right left
+		SET_RIGHT(node, rightRotate(GET_RIGHT(node)));
+		return leftRotate(node);
+	}
+
+	return node;
+}
+
+/*
+	find the inorder successor of the given node
+*/
+WPTR inorder_successor(WPTR node) {
+	WPTR curr = GET_RIGHT(node);
+	while (curr != NULL && GET_LEFT(curr) != NULL)
+		curr = GET_LEFT(curr);
+
+	return curr;
+}
+
+/*
+	Driver function to delete block in the free blocks tree
+*/
+WPTR remove_block_from_tree(WPTR ptr) {
+	root = remove_block(root, ptr, 1);
+}
+/*
+	function to actually delete blocks into the free blocks tree
+*/
+WPTR remove_block(WPTR node, WPTR ptr, int is_first) {
+	if (node == NULL)
+		return NULL;
+
+	// printf("At node %d, to delete %d, is_f =  %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(ptr), is_first);
+	
+	int block_size = GET_BLOCK_SIZE(ptr);
+	if (block_size < GET_BLOCK_SIZE(node)) {
+		// printf("Moving left\n");
+		WPTR left_node = remove_block(GET_LEFT(node), ptr, is_first);
+		// printf("Setting left of %d as %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(left_node));
+		SET_LEFT(node, left_node);
+	} else if (block_size > GET_BLOCK_SIZE(node)) {
+		// printf("Moving right\n");
+		WPTR right_node = remove_block(GET_RIGHT(node), ptr, is_first);
+		SET_RIGHT(node, right_node);
+		// printf("Setting right of %d as %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(right_node));
+	} else {
+		if (GET_NEXT(node) && is_first) { // More than 1 block and is the node that needs to be deleted explicitly (not inorder successor node)
+			 // The node itself is the block we are searching for
+			SET_LEFT(GET_NEXT(node), GET_LEFT(node));
+			SET_RIGHT(GET_NEXT(node), GET_RIGHT(node));
+			return GET_NEXT(node);
+		} else { // Last block in the list
+			if (!GET_LEFT(node) && !GET_RIGHT(node)) {
+				// printf("Node %d has no child, return NULL to parent\n", GET_BLOCK_SIZE(node));
+				return NULL;
+			} else if (!GET_LEFT(node) || !GET_RIGHT(node))  { // one child 
+				// printf("Node %d has ONE child, return CHILD to parent\n", GET_BLOCK_SIZE(node));
+				node = GET_LEFT(node) ? GET_LEFT(node) : GET_RIGHT(node);
+			} else {
+				WPTR inorder_succ = inorder_successor(node);
+				// printf("Inorder succ: %d\n", GET_BLOCK_SIZE(inorder_succ));
+				// printf("Will remove %d from subtree root at %d\n", GET_BLOCK_SIZE(inorder_succ), GET_BLOCK_SIZE(GET_RIGHT(node)));
+				WPTR right_node = remove_block(GET_RIGHT(node), inorder_succ, 0);
+
+				// printf("Setting right of %d as %d\n", GET_BLOCK_SIZE(inorder_succ), right_node ? GET_BLOCK_SIZE(right_node) : -1);
+				SET_RIGHT(inorder_succ, right_node);
+				// printf("Setting left of %d as %d\n", GET_BLOCK_SIZE(inorder_succ), GET_LEFT(node) ? GET_BLOCK_SIZE(GET_LEFT(node)) : -1);
+				SET_LEFT(inorder_succ, GET_LEFT(node));
+				node = inorder_succ;
+			}
+		}
+	}
+
+
+	// printf("Here\n");
+	// if (node == NULL) {
+	// 	return NULL;
+	// }
+
+	SET_HEIGHT(node);
+	int balance_factor = GET_BALANCE(node);
+
+	// printf("Bal Factor at %d is %d\n", GET_BLOCK_SIZE(node), balance_factor);
+	// // printf("Left of cur node %d\n", GET_LEFT(node) ? GET_BLOCK_SIZE(GET_LEFT(node)) : -1);
+	// printf("Pre: ");
+	// preorder(node);
+	// printf("\n");
+	// printf("In: ");
+	// inorder(node);
+	// printf("\n");
+	// printf("LH : %d, RH %d\n", GET_HEIGHT(GET_LEFT(node)), GET_HEIGHT(GET_RIGHT(node)));
+
+
+	// Left Left Case 
+	// printf("1At node %d, bal of left of cur node %d\n", GET_BLOCK_SIZE(node), GET_BALANCE(GET_LEFT(node)));
+	// printf("Conds: %d %d\n", GET_BALANCE(GET_LEFT(node)) > 0, GET_BALANCE(GET_LEFT(node)) <= 0);
+    if (balance_factor > 1 && (GET_BALANCE(GET_LEFT(node)) >= 0))  {
+		// printf("2At node %d, bal of left of cur node %d, %d cond val\n", GET_BLOCK_SIZE(node), GET_BALANCE(GET_LEFT(node)), balance_factor > 1 && (GET_BALANCE(GET_LEFT(node)) >= 0));
+		// printf("LL case, Right rotate at %d\n", GET_BLOCK_SIZE(node));
+		return rightRotate(node);
+	}
+    	
+
+	// printf("After LL\n");  
+  
+    // Left Right Case  
+    if (node != NULL && balance_factor > 1 && GET_BALANCE(GET_LEFT(node)) < 0) {  
+		// printf("LR case, Left rotate at %d then right rotate at %d\n", GET_BLOCK_SIZE(GET_LEFT(node)), GET_BLOCK_SIZE(node));
+		// printf("Pre: ");
+		// preorder(node);
+		// printf("\n");
+		SET_LEFT(node, leftRotate(GET_LEFT(node)));
+        WPTR right_rotate = rightRotate(node);
+		// printf("Pre after right rotate: ");
+		// preorder(right_rotate);
+		// printf("\n");
+		return right_rotate;  
+    } 
+
+	// printf("After LR\n");   
+  
+    // Right Right Case  
+    if (node != NULL && balance_factor < -1 && GET_BALANCE(GET_RIGHT(node)) <= 0)  {
+		// printf("RR case, Left rotate at %d\n", GET_BLOCK_SIZE(node));
+		return leftRotate(node);
+	}
+        
+
+	// printf("After RR\n"); 
+  
+    // Right Left Case  
+    if (node != NULL && balance_factor < -1 && GET_BALANCE(GET_RIGHT(node)) > 0) {
+		// printf("RL case, Right rotate at %d then left rotate at %d\n", GET_BLOCK_SIZE(GET_RIGHT(node)), GET_BLOCK_SIZE(node));  
+        SET_RIGHT(node, rightRotate(GET_RIGHT(node)));
+        return leftRotate(node);  
+    }
+
+	// printf("After RL\n");   
+
+	return node;
+}
+
+WPTR best_res = NULL;
+void find_best(WPTR cur, int size) {
+	if (cur == NULL) {
+		return;
+	}
+	
+	if (GET_BLOCK_SIZE(cur) == size) {
+		best_res = cur;
+		return;
+	} else if (GET_BLOCK_SIZE(cur) > size) {
+		best_res = cur;
+		find_best(GET_LEFT(cur), size);
+	} else if (GET_BLOCK_SIZE(cur) < size) {
+		find_best(GET_RIGHT(cur), size);
+	}
 }
 
 /*
@@ -139,50 +361,17 @@ void* move_pbrk(int bytes) {
 	// Initialise new free block
 	SET_HDR(bptr, FHDR(bytes, 0));
 	SET_FTR(bptr, FHDR(bytes, 0));
-	SET_NEXT(bptr, 0);
-	SET_PREV(bptr, 0);
+	// SET_NEXT(bptr, 0);
+	// SET_PREV(bptr, 0);
+	reset_pointers(bptr);
 
 	// Coalesce with prev free block (if any)
 	bptr = coalesce(bptr);
 
-	// Add block to list
-	add_block_to_fl(bptr);
+	// Add block to tree
+	add_block_to_tree(bptr);
 
 	return bptr;
-}
-
-
-/*
-	Removes a block from the free list.
-*/
-void remove_block_from_fl(void *block) {
-	// TODO: Safety check if required
-
-	// Case 1: Only node i.e next = 0 & prev = 0
-	if (!GET_NEXT(block) && !GET_PREV(block)) {
-		fl_head = NULL;
-		return;
-	}
-
-	// Case 2: Head node i.e. prev = 0 and next != 0
-	if (!GET_PREV(block) && GET_NEXT(block)) {
-		fl_head = GET_NEXT(block);
-		SET_PREV(fl_head, NULL);
-		return;
-	}
-
-	// Case 3: Last node i.e prev != 0 and next = 0
-	if (GET_PREV(block) && !GET_NEXT(block)) {
-		SET_NEXT(GET_PREV(block), 0);
-		return;
-	}
-	
-	// Case 4: Middle node
-	void* prev_block = GET_PREV(block);
-	void* next_block = GET_NEXT(block);
-
-	SET_NEXT(prev_block, next_block);
-	SET_PREV(next_block, prev_block);
 }
 
 /*
@@ -205,14 +394,14 @@ void* coalesce(void* bptr) {
 
 	// Case 1: Prev and next both are allocated, do nothing
 	if (!next_a && prev_a) { // Case 2: Prev is allocated, next is free
-		remove_block_from_fl(next_block);
+		remove_block_from_tree(next_block);
 		cur_size += next_size;
 		// Order is important sinze, FTR location calculation makes use of size in HDR
 		SET_HDR(bptr, FHDR(cur_size, 0));
 		SET_FTR(bptr, FHDR(cur_size, 0));
 
 	} else if (next_a && !prev_a) { // Case 3: Next is allocated, prev is free
-		remove_block_from_fl(prev_block);
+		remove_block_from_tree(prev_block);
 		cur_size += prev_size;
 		// Order is important sinze, FTR location calculation makes use of size in HDR
 		SET_HDR(prev_block, FHDR(cur_size, 0));
@@ -221,8 +410,8 @@ void* coalesce(void* bptr) {
 		bptr = prev_block;
 
 	} else if (!next_a && !prev_a){ // Case 4: Prev and next both are free
-		remove_block_from_fl(next_block);
-		remove_block_from_fl(prev_block);
+		remove_block_from_tree(next_block);
+		remove_block_from_tree(prev_block);
 		cur_size += (next_size + prev_size);
 		// Order is important since, FTR location calculation makes use of size in HDR
 		SET_HDR(prev_block, FHDR(cur_size, 0));
@@ -235,90 +424,12 @@ void* coalesce(void* bptr) {
 }
 
 /*
-	Finds the best block to allocate
-	bytes = raw number of bytes required (i.e. including header and footer)
-*/
-void* best_fit(int bytes) {
-	void* itr = fl_head;
-	if (!fl_head) { // Safety check
-		return NULL;
-	}
-	
-	unsigned int best_size = 1 << 31;
-	void* ret = NULL;
-
-	while (itr != 0) {
-		int cur_size = GET_BLOCK_SIZE(itr);
-		if (cur_size == bytes) // we have got the best size
-                        return itr;
-
-		if (cur_size >= bytes && cur_size < best_size) {
-			best_size = cur_size;
-			ret = itr;
-		}
-
-		itr = GET_NEXT(itr);
-	}
-
-	return ret;
-}
-
-/*
-	Finds the worst block to allocate
-	bytes = raw number of bytes required (i.e. including header and footer)
-*/
-void* worst_fit(int bytes) {
-	void* itr = fl_head;
-	if (!fl_head) { // Safety check
-		return NULL;
-	}
-
-	unsigned int worst_size = 0;
-	void* ret = NULL;
-
-	while (itr != 0) {
-		int cur_size = GET_BLOCK_SIZE(itr);
-		if (cur_size >= bytes && cur_size > worst_size) {
-			worst_size = cur_size;
-                        ret = itr;
-		}
-
-		itr = GET_NEXT(itr);
-	}
-
-	return ret;
-}
-/*
-	Finds the first block to allocate
-	bytes = raw number of bytes required (i.e. including header and footer)
-*/
-void* first_fit(int bytes) {
-	void* itr = fl_head;
-	if (!fl_head) { // Safety check
-		return NULL;
-	}
-	
-	void* ret = NULL;
-
-	while (itr != 0) {
-		int cur_size = GET_BLOCK_SIZE(itr);
-		if (cur_size >= bytes) {
-			return itr;
-		}
-
-		itr = GET_NEXT(itr);
-	}
-
-	return ret;
-}
-
-/*
 	Allocate and split block if required
 	bytes = raw number of bytes required (i.e. including header and footer)
 */
 void allocate(void* ptr, int bytes) {
 	int block_size = GET_BLOCK_SIZE(ptr);
-	remove_block_from_fl(ptr);
+	remove_block_from_tree(ptr);
 
 	// Case 1: BLOCK SIZE = bytes, no splitting required 
 	if (block_size - bytes <= MIN_FREE_BLOCK_SIZE) {
@@ -332,25 +443,19 @@ void allocate(void* ptr, int bytes) {
 		void* next_bptr = GET_ANEXT(ptr);
 		SET_HDR(next_bptr, FHDR(block_size - bytes, 0));
 		SET_FTR(next_bptr, FHDR(block_size - bytes, 0));
-		SET_NEXT(next_bptr, 0);
-		SET_PREV(next_bptr, 0);
+		reset_pointers(next_bptr);
 
 		next_bptr = coalesce(next_bptr);
 
-		add_block_to_fl(next_bptr);
+		add_block_to_tree(next_bptr);
 	}
 	
 }
 
+// /* 
+//  * mm_init - initialize the malloc package.
+//  */
 
-
-
-
-/* 
- * mm_init - initialize the malloc package.
- */
-
-void *init_mem_sbrk_break = NULL;
 
 
 int mm_init(void)
@@ -366,6 +471,7 @@ int mm_init(void)
 	 * This function will be called multiple time in the driver code "mdriver.c"
 	 */
 
+    // printf("Hello from integrateBBST!!\n\n");
 	mem_reset_brk();
 	void *ptr = (char*)mem_sbrk(0);
 	int mask = (int)((unsigned int)ptr&0x7);
@@ -381,7 +487,7 @@ int mm_init(void)
 	 * Reason: When we allocate blocks we need to allocate 4B of block header as well.
 	 * So everytime the pointer to the actual block (not block header) is point to address which is multiple of 8 (that means aligned by 8 bytes)
 	 */
-	fl_head = NULL;
+	root = NULL;
 
 	// Dummy block to prevent segment overflow error
 	unsigned int sz = 8;
@@ -423,26 +529,27 @@ void *mm_malloc(size_t size)
 	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
 
 	// Search for block in free list
-	void* best_block = best_fit(req_size);
+	best_res = NULL;
+    find_best(root, req_size);
 	
-	if (best_block != NULL) {
-		allocate(best_block, req_size);
-		return (void*)((char*)best_block + 4); 
+	if (best_res != NULL) {
+		allocate(best_res, req_size);
+		return (void*)((char*)best_res + 4); 
 	}
 	
 	// Try to extend program break
-	best_block = move_pbrk(max(req_size, EXTEND_BY_SIZE));
-	if (best_block != NULL) {
-		allocate(best_block, req_size);
-		return (void*)((char*)best_block + 4); 
+	WPTR bptr = move_pbrk(max(req_size, EXTEND_BY_SIZE));
+	if (bptr != NULL) {
+		allocate(bptr, req_size);
+		return (void*)((char*)bptr + 4); 
 	}
 
 	printf("Could not allocate block\n");
 	return NULL;
-	
-	// return mem_sbrk(size);		//mem_sbrk() is wrapper function for the sbrk() system call. 
-								//Please use mem_sbrk() instead of sbrk() otherwise the evaluation results 
-								//may give wrong results
+			
+    //mem_sbrk() is wrapper function for the sbrk() system call. 
+    //Please use mem_sbrk() instead of sbrk() otherwise the evaluation results 
+    //may give wrong results
 }
 
 
@@ -469,12 +576,11 @@ void mm_free(void *ptr)
 	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
 	SET_HDR(bptr, FHDR(GET_BLOCK_SIZE(bptr), 0));
 	SET_FTR(bptr, FHDR(GET_BLOCK_SIZE(bptr), 0));
-	SET_NEXT(bptr, 0);
-	SET_PREV(bptr, 0);
+	reset_pointers(bptr);
 
 	bptr = coalesce(bptr);
 
-	add_block_to_fl(bptr);
+	add_block_to_tree(bptr);
 }
 
 /*
@@ -511,40 +617,22 @@ void *mm_realloc(void *ptr, size_t size)
 	} 
 	else { // Allocate more memory
 		void *pbrk = mem_sbrk(0);
-                if (pbrk == GET_ANEXT(bptr)) { // Extend the block
-                        void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
-                        if (newptr != NULL) {
-                                allocate(newptr, req_size);
-                                return (void*)((char*)newptr + 4);
-                        }
+		if (pbrk == GET_ANEXT(bptr)) { // Extend the block
+			void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
+			if (newptr != NULL) {
+					allocate(newptr, req_size);
+					return (void*)((char*)newptr + 4);
+			}
 
-                        return NULL;
-                }
-                else { // allocate a new block
-                        void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
-                        if (newptr == NULL)
-                                return NULL;
-                        
+			return NULL;
+		} else { // allocate a new block
+			void *newptr = mm_malloc(size); // mm_malloc() will take care of the header & footer part
+			if (newptr == NULL)
+					return NULL;
+			
 			memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
-                        mm_free(ptr);
+			mm_free(ptr);
 			return newptr;
 		}
-
 	}
-
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
