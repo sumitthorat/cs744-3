@@ -104,7 +104,7 @@ WPTR insert_block(WPTR node, WPTR ptr);
 
 WPTR inorder_successor(WPTR node);
 WPTR remove_block_from_tree(WPTR ptr);
-WPTR remove_block(WPTR node, WPTR ptr, WPTR parent);
+WPTR remove_block(WPTR node, WPTR ptr);
 
 void* move_pbrk(int);
 void* coalesce(void*);
@@ -202,29 +202,25 @@ WPTR inorder_successor(WPTR node) {
 	Driver function to insert block in the free blocks tree
 */
 WPTR remove_block_from_tree(WPTR ptr) {
-	root = remove_block(root, ptr, NULL);
+	root = remove_block(root, ptr);
 }
 /*
 	function to actually insert blocks into the free blocks tree
 */
-WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
+WPTR remove_block(WPTR node, WPTR ptr) {
 	if (node == NULL)
 		return NULL;
 	
 	int block_size = GET_BLOCK_SIZE(ptr);
 	if (block_size < GET_BLOCK_SIZE(node)) 
-		SET_LEFT(node, remove_block(GET_LEFT(node), ptr, node));
+		SET_LEFT(node, remove_block(GET_LEFT(node), ptr));
 	else if (block_size > GET_BLOCK_SIZE(node)) 
-		SET_RIGHT(node, remove_block(GET_RIGHT(node), ptr, node));
+		SET_RIGHT(node, remove_block(GET_RIGHT(node), ptr));
 	else {
 		if (!GET_NEXT(node)) { // There is more than 1 block with the size same as this block. So node deletion is not required from tree
 			if (node == ptr) { // The node itself is the block we are searching for
 				SET_LEFT(GET_NEXT(node), GET_LEFT(node));
 				SET_RIGHT(GET_NEXT(node), GET_RIGHT(node));
-				if (GET_LEFT(parent) == node)
-					SET_LEFT(parent, GET_NEXT(node));
-				else 
-					SET_RIGHT(parent, GET_NEXT(node));
 				
 				return GET_NEXT(node);
 			}
@@ -249,14 +245,9 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 			else {
 				WPTR inorder_succ = inorder_successor(node);
 
-				if (GET_LEFT(parent) == node)
-					SET_LEFT(parent, inorder_succ);
-				else
-					SET_RIGHT(parent, inorder_succ);
-				
-				SET_RIGHT(inorder_succ, remove_block(GET_RIGHT(node), inorder_succ, node));
+				SET_RIGHT(inorder_succ, remove_block(GET_RIGHT(node), inorder_succ));
 				SET_LEFT(inorder_succ, GET_LEFT(node));
-				node = ptr;
+				node = inorder_succ;
 			}
 		}
 	}
@@ -286,6 +277,7 @@ WPTR remove_block(WPTR node, WPTR ptr, WPTR parent) {
 
 	return node;
 }
+
 /*
 	Uses the mem_sbrk(bytes) call to move the program break. 
 	Treats the extended chunk as a new free block.
