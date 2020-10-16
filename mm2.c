@@ -135,6 +135,8 @@ WPTR rightRotate(WPTR y) {
 	return x;
 }
 
+
+
 /*
 	Reset Left/Right/Next pointers of the block
 */
@@ -215,41 +217,37 @@ WPTR remove_block(WPTR node, WPTR ptr, int is_first) {
 	if (node == NULL)
 		return NULL;
 
-	// printf("At node %d, to delete %d, is_f =  %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(ptr), is_first);
-	
 	int block_size = GET_BLOCK_SIZE(ptr);
 	if (block_size < GET_BLOCK_SIZE(node)) {
-		// printf("Moving left\n");
 		WPTR left_node = remove_block(GET_LEFT(node), ptr, is_first);
-		// printf("Setting left of %d as %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(left_node));
 		SET_LEFT(node, left_node);
 	} else if (block_size > GET_BLOCK_SIZE(node)) {
-		// printf("Moving right\n");
 		WPTR right_node = remove_block(GET_RIGHT(node), ptr, is_first);
 		SET_RIGHT(node, right_node);
-		// printf("Setting right of %d as %d\n", GET_BLOCK_SIZE(node), GET_BLOCK_SIZE(right_node));
 	} else {
 		if (GET_NEXT(node) && is_first) { // More than 1 block and is the node that needs to be deleted explicitly (not inorder successor node)
 			 // The node itself is the block we are searching for
-			SET_LEFT(GET_NEXT(node), GET_LEFT(node));
-			SET_RIGHT(GET_NEXT(node), GET_RIGHT(node));
-			return GET_NEXT(node);
+			if (node == ptr) {
+				SET_LEFT(GET_NEXT(node), GET_LEFT(node));
+				SET_RIGHT(GET_NEXT(node), GET_RIGHT(node));
+				return GET_NEXT(node);
+			} else {
+				WPTR prev = node;
+				while (GET_NEXT(prev) != ptr) {
+					prev = GET_NEXT(prev);
+				}
+				SET_NEXT(prev, GET_NEXT(GET_NEXT(prev)));
+				return node;
+			}
 		} else { // Last block in the list
 			if (!GET_LEFT(node) && !GET_RIGHT(node)) {
-				// printf("Node %d has no child, return NULL to parent\n", GET_BLOCK_SIZE(node));
 				return NULL;
 			} else if (!GET_LEFT(node) || !GET_RIGHT(node))  { // one child 
-				// printf("Node %d has ONE child, return CHILD to parent\n", GET_BLOCK_SIZE(node));
 				node = GET_LEFT(node) ? GET_LEFT(node) : GET_RIGHT(node);
 			} else {
 				WPTR inorder_succ = inorder_successor(node);
-				// printf("Inorder succ: %d\n", GET_BLOCK_SIZE(inorder_succ));
-				// printf("Will remove %d from subtree root at %d\n", GET_BLOCK_SIZE(inorder_succ), GET_BLOCK_SIZE(GET_RIGHT(node)));
 				WPTR right_node = remove_block(GET_RIGHT(node), inorder_succ, 0);
-
-				// printf("Setting right of %d as %d\n", GET_BLOCK_SIZE(inorder_succ), right_node ? GET_BLOCK_SIZE(right_node) : -1);
 				SET_RIGHT(inorder_succ, right_node);
-				// printf("Setting left of %d as %d\n", GET_BLOCK_SIZE(inorder_succ), GET_LEFT(node) ? GET_BLOCK_SIZE(GET_LEFT(node)) : -1);
 				SET_LEFT(inorder_succ, GET_LEFT(node));
 				node = inorder_succ;
 			}
@@ -257,73 +255,39 @@ WPTR remove_block(WPTR node, WPTR ptr, int is_first) {
 	}
 
 
-	// printf("Here\n");
-	// if (node == NULL) {
-	// 	return NULL;
-	// }
 
 	SET_HEIGHT(node);
 	int balance_factor = GET_BALANCE(node);
 
-	// printf("Bal Factor at %d is %d\n", GET_BLOCK_SIZE(node), balance_factor);
-	// // printf("Left of cur node %d\n", GET_LEFT(node) ? GET_BLOCK_SIZE(GET_LEFT(node)) : -1);
-	// printf("Pre: ");
-	// preorder(node);
-	// printf("\n");
-	// printf("In: ");
-	// inorder(node);
-	// printf("\n");
-	// printf("LH : %d, RH %d\n", GET_HEIGHT(GET_LEFT(node)), GET_HEIGHT(GET_RIGHT(node)));
-
-
-	// Left Left Case 
-	// printf("1At node %d, bal of left of cur node %d\n", GET_BLOCK_SIZE(node), GET_BALANCE(GET_LEFT(node)));
-	// printf("Conds: %d %d\n", GET_BALANCE(GET_LEFT(node)) > 0, GET_BALANCE(GET_LEFT(node)) <= 0);
     if (balance_factor > 1 && (GET_BALANCE(GET_LEFT(node)) >= 0))  {
-		// printf("2At node %d, bal of left of cur node %d, %d cond val\n", GET_BLOCK_SIZE(node), GET_BALANCE(GET_LEFT(node)), balance_factor > 1 && (GET_BALANCE(GET_LEFT(node)) >= 0));
-		// printf("LL case, Right rotate at %d\n", GET_BLOCK_SIZE(node));
 		return rightRotate(node);
 	}
-    	
-
-	// printf("After LL\n");  
+    	 
   
     // Left Right Case  
     if (node != NULL && balance_factor > 1 && GET_BALANCE(GET_LEFT(node)) < 0) {  
-		// printf("LR case, Left rotate at %d then right rotate at %d\n", GET_BLOCK_SIZE(GET_LEFT(node)), GET_BLOCK_SIZE(node));
-		// printf("Pre: ");
-		// preorder(node);
-		// printf("\n");
 		SET_LEFT(node, leftRotate(GET_LEFT(node)));
         WPTR right_rotate = rightRotate(node);
-		// printf("Pre after right rotate: ");
-		// preorder(right_rotate);
-		// printf("\n");
 		return right_rotate;  
     } 
-
-	// printf("After LR\n");   
+ 
   
     // Right Right Case  
     if (node != NULL && balance_factor < -1 && GET_BALANCE(GET_RIGHT(node)) <= 0)  {
-		// printf("RR case, Left rotate at %d\n", GET_BLOCK_SIZE(node));
 		return leftRotate(node);
 	}
-        
-
-	// printf("After RR\n"); 
+         
   
     // Right Left Case  
     if (node != NULL && balance_factor < -1 && GET_BALANCE(GET_RIGHT(node)) > 0) {
-		// printf("RL case, Right rotate at %d then left rotate at %d\n", GET_BLOCK_SIZE(GET_RIGHT(node)), GET_BLOCK_SIZE(node));  
         SET_RIGHT(node, rightRotate(GET_RIGHT(node)));
         return leftRotate(node);  
     }
 
-	// printf("After RL\n");   
-
 	return node;
 }
+
+
 
 WPTR best_res = NULL;
 void find_best(WPTR cur, int size) {
@@ -471,7 +435,6 @@ int mm_init(void)
 	 * This function will be called multiple time in the driver code "mdriver.c"
 	 */
 
-    // printf("Hello from integrateBBST!!\n\n");
 	mem_reset_brk();
 	void *ptr = (char*)mem_sbrk(0);
 	int mask = (int)((unsigned int)ptr&0x7);

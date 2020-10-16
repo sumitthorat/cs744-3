@@ -8,3 +8,6 @@ a.out
 testing_bbst.txt
 tracefiles/*
 .gitignore
+.fuse_*
+.DS_Store
+.idea/
