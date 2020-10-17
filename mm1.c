@@ -24,15 +24,15 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "team name",
+    "SegFaultBusters",
     /* First member's full name */
-    "member 1",
+    "Rohit Kundu",
     /* First member's email address */
-    "member_1@cse.iitb.ac.in",
+    "rkundu@cse.iitb.ac.in",
     /* Second member's full name (leave blank if none) */
-    "member 2",
+    "Sumit Thorat",
     /* Second member's email address (leave blank if none) */
-    "member_2@cse.iitb.ac.in"
+    "sumitthorat@cse.iitb.ac.in"
 };
 
 /* single word (4) or double word (8) alignment */
@@ -77,7 +77,7 @@ team_t team = {
 #define FHDR(size, a) (size | a)
 
 // Min no bytes to extend heap
-#define EXTEND_BY_SIZE (1 << 12) // in bytes
+#define EXTEND_BY_SIZE (1 << 5) // in bytes
 
 // Utility to find maximum
 #define max(x, y) (x > y ? x : y)
@@ -431,14 +431,17 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {	
-	size = ((size+7)/8)*8; //8-byte alignement	
-	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
-	
-	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
+	size = ((size+7)/8)*8; //8-byte alignement
 
 	if(ptr == NULL) {	//memory was not previously allocated
 		return mm_malloc(size);
 	}
+
+	unsigned int req_size = size + 8; // Adjusted to accomodate header and footer
+	
+	void* bptr = (void*)((char*) ptr - 4); // move back 4 bytes
+
+	
 	
 	if(size == 0) {				//new size is zero
 		mm_free(ptr);
@@ -455,27 +458,25 @@ void *mm_realloc(void *ptr, size_t size)
 
 	int block_size = GET_BLOCK_SIZE(bptr);
 	if (req_size <= block_size) {
-		allocate(bptr,req_size);
+		allocate(bptr, req_size);
 		return (void*)((char*)bptr + 4);
-	} 
-	else { // Allocate more memory
+	} else { // Allocate more memory
 		void *pbrk = mem_sbrk(0);
-                if (pbrk == GET_ANEXT(bptr)) { // Extend the block
-                        void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
-                        if (newptr != NULL) {
-                                allocate(newptr, req_size);
-                                return (void*)((char*)newptr + 4);
-                        }
-
-                        return NULL;
-                }
-                else { // allocate a new block
-                        void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
-                        if (newptr == NULL)
-                                return NULL;
-                        
+		if (pbrk == GET_ANEXT(bptr)) { // Extend the block
+			void *newptr = move_pbrk(max(req_size - block_size, EXTEND_BY_SIZE));
+			if (newptr != NULL) {
+					allocate(newptr, req_size);
+					return (void*)((char*)newptr + 4);
+			}
+			return NULL;
+			
+		} else { // allocate a new block
+			void *newptr = mm_malloc(size);         // mm_malloc() will take care of the header & footer part
+			if (newptr == NULL)
+				return NULL;
+				
 			memcpy(newptr, ptr, block_size - 8); // we don't have to copy header & footer
-                        mm_free(ptr);
+			mm_free(ptr);
 			return newptr;
 		}
 

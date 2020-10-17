@@ -35,28 +35,45 @@ then
 	MAKE_SUM='TRUE'
 fi
 
-LIST=$(ls "$FOLDER/")
+myFunc(){
+	make &> \dev\null ;
+	
+	LIST=$(ls "$FOLDER/");
 
-TOTAL=0
-for file in $LIST
-do
-	if [[ $GRADER = "TRUE" ]]
-	then
-		val=$(./mdriver2 -ag -f "$FOLDER/$file" | tail -1 | awk 'BEGIN{FS=":"}{print $2}')
-		if [[ $MAKE_SUM = 'FALSE' ]]
+	TOTAL=0
+	for file in $LIST
+	do
+		if [[ $GRADER = "TRUE" ]]
 		then
-			echo $val
-		fi
-		TOTAL=$((TOTAL+val))
-	else
-		echo -n "$file ->"
-		./mdriver2 -a -f "$FOLDER/$file"
-		echo
-	fi	
+			val=$(./mdriver1 -ag -f "$FOLDER/$file" | tail -1 | awk 'BEGIN{FS=":"}{print $2}')
+			if [[ $MAKE_SUM = 'FALSE' ]]
+			then
+				echo $val >> output_report
+			fi
+			TOTAL=$((TOTAL+val))
+		else
+			echo -n "$file ->" >> output_report
+			./mdriver1 -a -f "$FOLDER/$file" >> output_report
+			echo
+		fi	
 
-done
+	done
 
-if [[ $MAKE_SUM = 'TRUE' ]]
-then
-	echo $TOTAL
-fi
+	if [[ $MAKE_SUM = 'TRUE' ]]
+	then
+		echo $TOTAL >> output_report
+	fi
+}
+
+
+# I=5
+# while [[ I -le 25 ]]
+# do
+# 	echo -n "Size: $I, Res: " >> output_report
+# 	sed -i "88s/12/$I/" mm2.c
+# 	myFunc
+# 	sed -i "88s/$I/12/" mm2.c
+#     ((I++))
+# done
+
+myFunc
